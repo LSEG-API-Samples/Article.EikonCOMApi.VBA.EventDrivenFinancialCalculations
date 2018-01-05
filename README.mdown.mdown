@@ -1,0 +1,553 @@
+# Event-driven financial calculations with Thomson Reuters Eikon for Excel and Visual Basic for Applications
+
+## Introduction
+
+While Microsoft is considering adding Python as native scripting language into Excel, we still have some time to practice Visual Basic for Applications and its lesser known object oriented approach features. 
+
+For this article you should be somewhat familiar with Thomson Reuters Eikon for Excel, Adfin and VBA, as well as with some basic fixed income calculations.
+
+## Financial calculations on a spreadsheet
+
+Imagine you are tasked with calculating a z-spread for a fixed income instrument in Excel. That should not be too complex, as you can just get all necessary data on your spreadsheet and use a couple of Adfin functions. As an example, you can use the **Bond pricing** template from the **Template library**<sup>1</sup> in Eikon for Excel.
+
+Here are the inputs of your calculation by data type: 
+
+| Name            | Type        | Source           |
+| --------------- | ----------- |------------------| 
+| Settlement date | Calculated  | ```BdSettle()``` | 
+| Coupon          | Reference   | ```TR.FiCouponRate```|
+| Maturity date   | Reference   | ```TR.FiMaturityDate```  |
+| Bond structure  | Reference   |```TR.ADF_BONDSTRUCTURE```|
+| Price           | Real-time   | ```BID``` | 
+| Zero curve      | Real-time, currency specific | ```GV2_DATE``` and ```PRIMACT_1``` |
+| Rate structure  | Static, currency specific | ```RM:YC RATETYPE:CMP ZCTYPE:RATE DCB:AA``` |
+| Z-spread        | Calculated   | ```AdBondSpread()``` |
+
+Thus, we can accomplish the task with one fundamental data request, two real-time requests and one calculation for a single instrument.
+
+However, what if you have 100 bonds nominated in mixed currencies? You can end up with a giant spreadsheet that takes minutes to calculate and is virtually impossible to maintain. 
+
+Let us have a look at how can we migrate this structure to pure VBA.
+
+## Disclaimer
+
+The article does not present the full code listing but only highlights the key pieces that will help you get around the attached Excel workbook. I am using the **...** sign in the code samples in place of omitted pieces of code.  
+
+You must only run the code with Thomson Reuters Eikon plugin loaded and connected to the platform (signed in).
+
+The workbook has the following structure:
+
++ **ThisWorkBook** is the main module of the project;
++ Module: Utilities
++ Class module: Bond;
++ Class module: Curve;
++ Class module: CurveService;
++ Class module: ICurveEventHandler;
++ Class module: PriceDataService;
++ Class module: ReferenceDataService;
++ Class module: SearchService.
+
+The file which contains the code listing in mentioned on top like this.
+
+**CurveService.cls**:
+```vb
+Implements ICurveEventHandler
+```
+
+After opening the file please make sure that all references are loaded correctly, and if required relink the libraries by going to Tools > References... in the Visual Basic Editor toolbar.
+
+## Tools and API
+
+For this task we are going to use several Thomson Reuters Eikon COM APIs, located in your Thomson Reuters folder %PROGRAMFILES(X86)%\Thomson Reuters\Eikon\(**X, Y or Z folder**)\Bin.
+
+| Name              | Type       | File        |    
+| ----------------- | ---------- | ----------- | 
+| Adfin Real-time   | Real-time  | rtx.dll     | 
+| Adfin Analytics   | Calculated | adxfo.dll   | 
+| DEX2              | Reference  | dex2.dll<sup>*</sup>|
+| RSearch           | Search     | rsearch.dll<sup>*</sup>| 
+<small>* Located in ...\Bin\Apps\TR.OFFICE.CORE\0.0.0.0\Bin\\</small>
+
+For creating objects we are going to use this function:
+
+```vb
+Public Declare Function CreateReutersObject Lib "PLVbaApis.dll" (ByVal progID As String) As Object
+```
+
+I am not going to dive into the details of the usage of specific APIs as this is out of the scope of this article and I trust you can have a look at the documentation and samples on the Developer Community portal.
+
+However, since we will be working with data, I will need to add an introduction to two entities that we are going to use: real-time records and chains.
+
+A real-time record is a set of standard fields that contains the data related to a financial instrument. The key identifier of a record that is used by Thomson Reuters is a **RIC**, or the Reuters Instrument Code. 
+
+For instance, the bid quote for GBP/USD can be found in field BID of the GBP= RIC, or the offer yield for a 10-year US Treasury is in the SEC_YLD_1 field of the US10YT=RR RIC.
+
+The RIC structure is mainly defined by the asset class of the financial instrument, but can also contain the currency, tenor and the instrument type information.
+
+Since RICs are used as a universal identifier for all sorts of databases that we are going to use, all of the services will accept RICs as arguments.
+
+Records can be organized into series, which are called **chains**. For example, GBP= can be found on the EFX= chain, that contains all European currencies, and US10YT=RR is contained in the current on-the-run US Treasury chain 0#USBMK=.
+
+## Project structure
+
+Our app will take a list of ISINs and output a z-spread when the underlying curve updates. We will create separate services for search, reference data, real-time price updates and curves in order to separate the concerns. However, a real calculator used in production will have a different structure, so use with caution!
+
+We need to create two classes that will hold data:
+
++ ```Bond``` will hold all reference data required for z-spread calculation and its results, as well as a calculation ready event;
++ ```Curve``` will be a snapshot of the current zero coupon yield curve for the bond currency;
+
+The following services will serve the data:
+
++ Search service - to get the initial list of bond identifiers based on some search criteria;
++ Reference data service - to get the reference data required for calculations;
++ Curve service - to get the latest term structure in the selected currency;
++ Price services - to get the latest price for a bond.
+
+All services will generate events that the main app module will be subscribed to and do necessary manipulations.
+
+So, here is how it is going to roughly look like:
+
+![scheme](img/flow-scheme.png)
+
+### Search service
+
+We need to generate a list of codes based on some criteria, so for this we are going to create a wrapper around `RSearchLib.RSearchMgr` and `RSearchLib.RSearchQuery` (**rsearch.dll**) workflow with a `Query()` method and `OnUpdate()` event, delivering the results. 
+
+For more information on `RSearch` please go check out [this tutorial](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/learning?content=3560&type=learning_material_item) on the Developer Community portal.
+
+For our example, we are going to request all active Eurobonds with a fixed coupon rate issued by governments and maturing after today.
+
+This roughly translates into the following search query.
+
+**ThisWorkBook.bas**:
+```vb
+q = "RCSCountryGenealogy:'A:S' RCSCouponTypeGenealogy:'A:25' DbTypeDescription:'Govt/Treasury/Central Bank' IsActive:Yes MaturityDate:>" + Format$(DateTime.Date, "YYYY-MM-DD")
+```
+
+**NOTE**: There is no definitive guide on RSearch parameters, so a good practice will be to build your query using the **Search** tool in Thomson Reuters Eikon for Excel. 
+
+We will need to sort the results by the issuer name, so the request parameters will look like this.
+
+**ThisWorkBook.bas**:
+```vb
+mSearchService.Query "BOND", q, "NBROWS:2000 SORT:IssuerName:A"
+```
+
+After the query is executed, `SearchService` will raise an `OnUpdate()` event, containing a 1-dimension array with bond codes. Now that we have them, we will request the reference data.
+
+**ThisWorkbook.bas**:
+```vb
+Private Sub mSearchService_OnUpdate(ByVal Data As Variant)
+    mReferenceDataService.Query Data, ...
+End Sub
+```
+At the moment of writing, the query returned 831 instrument.
+
+### Reference data service
+
+The `ReferenceDataService` is a wrapper around `Dex2Lib.Dex2Mgr` and `Dex2Lib.Rdata` (**dex2.dll**) with a `Query()` method and `OnUpdate()` event. 
+
+For more information on `Dex2` please check out [this tutorial](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/learning?content=5760&type=learning_material_item) on the Developer Community portal.
+
+The `Query()` method takes a list of codes and fields. For our example we are going to request the following fields:
+
++ TR.PreferredRic;
++ TR.FiDescription;
++ TR.FiCouponRate;
++ TR.FiMaturityDate;
++ TR.FiCurrency;
++ TR.ADF_BONDSTRUCTURE.
+
+So, going back to `mSearchService_OnUpdate()` event handler:
+
+**ThisWorkbook.bas**:
+```vb
+Private Sub mSearchService_OnUpdate(ByVal Data As Variant)
+     mReferenceDataService.Query Data, _
+        Array("TR.PreferredRic", "TR.FiDescription", _
+              "TR.FiCouponRate", "TR.FiMaturityDate", _
+              "TR.FiCurrency", "TR.ADF_BONDSTRUCTURE")
+End Sub
+```
+
+After the query is executed and the data is collected, the service will return an `OnUpdate()` event with a 2-dimensional array of results. At this point we have enough data to generate our collections of bonds and zero curves. 
+
+For the bonds collection, `mBonds`, I am going to use the `Scripting.Dictionary` class from Microsoft Scripting Runtime library (**scrrun.dll**). This dictionary will contain objects of `Bond` class. 
+
+I am also adding two checks: ric is not NULL, coupon is not NULL - so only valid records are added to the collection.
+
+**ThisWorkbook.bas**:
+```vb
+Private Sub mReferenceDataService_OnUpdate(ByVal DataStatus As Dex2Lib.DEX2_DataStatus, ByVal Error As Variant, ByVal Data As Variant)
+
+  Dim currencies As Scripting.Dictionary
+  Set currencies = New Scripting.Dictionary
+  Set mBonds = New Scripting.Dictionary
+
+  Dim i As Long
+
+  For i = 0 To UBound(Data, 1)
+      Dim cur As String: cur = Data(i, 4)
+      If Not currencies.Exists(cur) Then currencies.Add cur, cur
+      
+      Dim b As Bond: Set b = New Bond
+      
+      If Data(i, 2) <> "NULL" and Data(i,0) <> "NULL" Then
+
+          b.CreateObject Data(i, 0), Data(i, 1), Data(i, 2), Data(i, 3), Data(i, 4), Data(i, 5)
+          
+          mBonds.Add b.Ric, b
+      End If
+  Next i
+  ... ' initialize the CurveService and PriceDataService
+End Sub
+```
+Now we need to request a yield curve for each currency and subscribe to updates for all bonds in the `mBonds` collection. 
+
+Let us start with curves.
+
+### Generating events (a digression)
+
+There are two ways of working with events in VBA: built-in `Event` type (with `WithEvents` and `RaiseEvent`) and a custom method that mimics how event propagation and handling works in more complex environments.
+
+While the first one is easy to implement, it has one major drawback: it is not possible to pass events from a collection of objects. So, unless you declare an object explicitly as `WithEvents`, working with its events is impossible.  
+
+In our example I do not know how many curves I need to request before executing the search query, while I plan to be able to subscribe to curve events in order to finalize my calculation.
+
+Here is how we can work around this limitation:
+
++ We will create an interface that will hold all of the events as methods, for example `IEventHandler`;
++ The collection object will implement `IEventHandler`;
++ All elements of the collection will hold a reference to the collection as `IEventHandler`.
+
+This may look like an overkill for smaller projects, but for calculators that handle multiple types of events from multiple entities it is quite handy.
+
+### Curve service
+
+The previous step yielded 27 currencies, but in real life not all currencies will have enough instruments for a yield curve.
+
+![Swap-derived zero curve guide](img/curves-0.png)
+
+#### Curve class and ICurveEventHandler
+
+A curve from real-time data perspective is a chain with terms as RICs. 
+
+![0#USDSBSLZ=R](img/curves-1.png)
+
+So, in order to build a term structure in the required format: a 2-dimensional array with dates and rates - we will need to:
+
+1. Get all RICs from the chain;
+2. Subscribe to fields `GV2_DATE` and `PRIMACT_1` fields on each RIC;
+3. Build a term structure on each update;
+3. Raise the `OnUpdate' event.
+
+The `Curve` class is essentially a wrapper around the functionality of `AdfinXRtLib.AdxRtChain` for **#1** and `AdfinXRtLib.AdxRtList` for **#2** from the real-time data API (**rtx.dll**).
+
+For more information on `AdfinXrt` please go check out [this tutorial](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/learning?content=3151&type=learning_material_item) on the Developer Community portal.
+
+Let us start with requesting the chain.
+
+**Curve.cls**:
+```vb
+Public Sub Start()
+  Set mRtxChain = CreateReutersObject("AdfinXRtLib.AdxRtChain")
+
+  With mRtxChain
+      .Source = "IDN"     'default real-time data source
+      .ItemName = mRic    'chain ric
+      .Mode = "SKIP:1-3"  'ignore first 3 rics on the chain
+      .RequestChain
+  End With
+End Sub
+```
+
+We can see if the chain RIC exists by looking at `DataStatus`. If all is ok, we can subscribe to all individual RICs (terms) from  `mRtxChain.Data`.
+
+**Curve.cls**:
+```vb
+Private Sub mRtxChain_OnUpdate(ByVal DataStatus As AdfinXRtLib.RT_DataStatus)
+
+  If DataStatus = RT_DS_FULL Or DataStatus = RT_DS_PARTIAL Then
+    
+      Set mRtxList = CreateReutersObject("AdfinXRtLib.AdxRtList")
+      
+      ... 
+
+      With mRtxList
+          .Source = "IDN"
+          .RegisterItems mRtxChain.Data, Array("GV2_DATE", "PRIMACT_1")
+          .StartUpdates RT_MODE_IMAGE
+      End With
+  Else
+      ... 'Raise curve not found event
+  End If
+End Sub
+```
+
+Once we receive the snapshot of the current values, we can build the term structure array. 
+
+**Curve.cls**:
+```vb
+Private Sub mRtxList_OnImage(ByVal a_dataStatus As AdfinXRtLib.RT_DataStatus)
+  If a_dataStatus = RT_DS_FULL Or a_dataStatus = RT_DS_PARTIAL Then
+      Dim i As Long
+      
+      Dim Items As Variant: Items = mRtxList.ListItems(RT_IRV_ALL, RT_ICV_STATUS)
+      
+      For i = LBound(Items, 1) To UBound(Items, 1)
+    
+          ...
+          
+          Dim fields As Variant: fields = mRtxList.ListFields(Items(i, 0), RT_FRV_ALL, RT_FCV_VALUE)
+
+          If IsNumeric(fields(0, 1)) And IsNumeric(fields(1, 1)) Then
+              mTermstructure(i, 0) = fields(0, 1)
+              mTermstructure(i, 1) = fields(1, 1) / 100
+          End If
+      Next i
+  End If
+  ... 'Raise curve updated event
+
+End Sub
+```
+
+We need to generate two types of events and pass them to the parent class `CurveService`, that can propagate them further to the main module of the app:
+
++ `OnUpdate()` - fired every time there is an update on the curve;
++ `OnError()` - should the curve not exist for a selected currency.
+
+So, let us create the `ICurveEventHandler` interface that will help us achieve the goal.
+
+**ICurveEventHandler.cls**:
+```vb
+Public Sub OnUpdate(ByVal Ccy As String, ByVal Termstructure As Variant)
+End Sub
+
+Public Sub OnError(ByVal Ccy As String, ByVal Message As String)
+End Sub
+```
+
+Now we need to add:
+
++ a placeholder for the event handler and create two methods that will call it;
++ `AddHandler` to add the reference;
++ `RemoveHandler` to remove it during object finalization.
+
+**Curve.cls**:
+```vb
+Private mEventHandler As ICurveEventHandler
+
+Public Sub AddHandler(ByRef EventHandler As ICurveEventHandler)
+    Set mEventHandler = EventHandler
+End Sub
+
+Public Sub RemoveHandler()
+    Set mEventHandler = Nothing
+End Sub
+
+Private Sub OnUpdate()
+    If Not mEventHandler Is Nothing Then mEventHandler.OnUpdate mCcy, mTermstructure
+End Sub
+
+Private Sub OnError(ByVal Message As String)
+    If Not mEventHandler Is Nothing Then mEventHandler.OnError mCcy, Message
+End Sub
+```
+
+That's it! Let us see how the implementation of `ICurveEventHandler` will look like in the `CurveService` class. 
+
+#### CurveService class
+
+First, let us add the following line right after `Option Explicit`.
+
+**CurveService.cls**:
+```vb
+Implements ICurveEventHandler
+```
+
+This will generate two methods which will collect the events from the dictionary of `Curve` objects and pass them on to the parent object.
+
+**CurveService.cls**:
+```vb
+Public Event OnUpdate(ByVal Ccy As String, ByVal Termstructure As Variant)
+Public Event OnNoCurveFound(ByVal Ccy As String)
+
+Private Sub ICurveEventHandler_OnError(ByVal Ccy As String, ByVal Message As String)
+    mCurves.Remove Ccy
+    RaiseEvent OnNoCurveFound(Ccy)
+End Sub
+
+Private Sub ICurveEventHandler_OnUpdate(ByVal Ccy As String, ByVal Termstructure As Variant)
+    RaiseEvent OnUpdate(Ccy, Termstructure)
+End Sub
+```
+
+After the blueprint of our event system is in place, we add the constructor routine. Since one can not pass arguments into the default class constructor, we will add a `CreateObject()` routine, that will initialize the object. 
+
+The common practice for the swap-derived zero curve codes is to add `0#` before the currency code and add `Z=R` to the ending, for example, `0#SGDZ=R` for Singaporean dollar. However, I decided to override default curves for several currencies, hence the `mCurveRicByCcy` dictionary.
+
+The most important thing here is adding the reference to the event handler `c.AddHandler(Me)`, so we can start receiving events.
+
+**CurveService.cls**:
+```vb
+Private Sub Class_Initialize()
+  Set mCurveRicByCcy = New Scripting.Dictionary
+
+  mCurveRicByCcy.Add "USD", "0#USDSBQLZ=R"
+  mCurveRicByCcy.Add "EUR", "0#EURABSEZ=R"
+  mCurveRicByCcy.Add "RUB", "0#RUBCCSZ=R"
+  mCurveRicByCcy.Add "BRL", "0#BRLPREZ=R"
+End Sub
+
+Public Sub CreateObject(ByVal CurrencyArray As Variant)
+
+  Set mCurves = New Scripting.Dictionary
+
+  Dim i As Long
+
+  For i = 0 To UBound(CurrencyArray)
+      Dim c As Curve: Set c = New Curve
+      
+      If mCurveRicByCcy.Exists(CurrencyArray(i)) Then
+          c.CreateObject mCurveRicByCcy.Item(CurrencyArray(i)), CurrencyArray(i)
+      Else
+          c.CreateObject "0#" & CurrencyArray(i) & "Z=R", CurrencyArray(i)
+      End If
+      
+      c.AddHandler Me
+      
+      mCurves.Add CurrencyArray(i), c
+  Next i
+End Sub
+```
+
+So, now when `CurveService` raised the `OnUpdate()` event, we can loop through the bond collection to find which bonds are eligible for recalculation.
+
+**ThisWorkBook.bas**:
+
+```vb
+Private Sub mCurveService_OnUpdate(ByVal Ccy As String, ByVal Termstructure As Variant)
+  Dim key As Variant
+
+  For Each key In mBonds.Keys
+      Dim b As Bond: Set b = mBonds.Item(key)
+      If b.Ccy = Ccy Then
+          ...
+      End If
+  Next key
+...
+End Sub
+```
+
+### Price data service
+
+The `PriceDataService` wraps around a single instance of `AdfinXRtLib.AdxRtList`, taking in a list of RICs and returning an event for each price update through the `OnUpdate()` event. 
+
+**PriceDataService.cls**:
+```vb
+Public Sub Start(ByVal InstrumentCodeArray As Variant)
+
+  ...
+
+  With mRtxList
+      .Source = "IDN"
+      .RegisterItems InstrumentCodeArray, Array("CF_BID")
+      .StartUpdates RT_MODE_ONUPDATE
+  End With
+End Sub
+
+Private Sub mRtxList_OnUpdate(ByVal a_itemName As String, ByVal a_userTag As Variant, ByVal a_itemStatus As AdfinXRtLib.RT_ItemStatus)
+    If a_itemStatus = RT_ITEM_OK Then
+        Dim fields As Variant: fields = mRtxList.ListFields(a_itemName, RT_FRV_ALL, RT_FCV_VALUE)
+        
+        RaiseEvent OnUpdate(a_itemName, fields(0, 1))
+    End If
+End Sub
+```
+
+Now each time there is an update on any of the instruments, the parent class will receive the event.
+
+**ThisWorkBook.bas**:
+```vb
+Private Sub mPriceDataService_OnUpdate(ByVal Instrument As String, ByVal Price As Double)
+
+  Dim b As Bond: Set b = mBonds.Item(Instrument)
+
+  b.SettlementDate = mBondModule.BdSettle(DateTime.Date, b.BondStructure, b.MaturityDate)
+  b.Price = Price
+
+End Sub
+```
+
+### Putting it all together
+
+So, now when all events are flowing in nicely, we are going to use two functions from the **Bond module** of the Adfin Analytics library (**adfxo.dll**) to calculate the bond settlement date and the z-spread:
+
++ BondModule.BdSettle(Trade date, Bond structure, Maturity date) - to calculate a settlement date; 
+
++ BondModule.AdBondSpread(Settlement date, Zero curve, Price, Maturity date, Coupon, Bond structure, Curve structure) - to calculate the z-spread.
+
+For this we will need to revisit the `mCurveService_OnUpdate()` routine.
+
+**ThisWorkBook.bas**:
+```vb
+Private Sub mCurveService_OnUpdate(ByVal Ccy As String, ByVal Termstructure As Variant)
+  ...
+
+  Dim key As Variant
+
+  For Each key In mBonds.Keys
+      Dim b As Bond: Set b = mBonds.Item(key)
+      If b.Ccy = Ccy and b.Price > 0 Then
+
+        b.SettlementDate = mBondModule.BdSettle(DateTime.Date, b.BondStructure, b.MaturityDate)
+
+        b.ZSpread = mBondModule.AdBondSpread(b.SettlementDate, Termstructure, b.Price / 100, CVar(b.MaturityDate), b.Coupon / 100, b.BondStructure, "RM:YC RATETYPE:CMP ZCTYPE:RATE DCB:AA", "", "")
+
+      End If
+  Next key
+...
+End Sub
+```
+
+So, now if you call **ThisWorkBook.Start()**, you should see the following output in the immediate window listing the bond, the price and the z-spread:
+
+```
+SearchService received 831 instruments
+ReferenceDataService received 831 instruments
+JMD           No curve found for currency
+CLP           No curve found for currency
+PEN           No curve found for currency
+
+...
+
+QA011341969=  QAGV   9.750 06/15/30        155.048       163 
+QA046853563=  QAGV   6.400 01/20/40        127.764       190 
+QA061523618=  QAGV   5.750 01/20/42        119.8         188 
+QA140578185=  QAGV   4.625 06/02/46        103.69        186 
+RO074369081=  ROGV   6.750 02/07/22 MTN    114.375       71 
+RO089364299=  ROGV   4.375 08/22/23 MTN    106.733       75 
+RO102029852=  ROGV   4.875 01/22/24 MTN    109.95        73 
+RO102029887=  ROGV   6.125 01/22/44 MTN    128.85        174 
+```
+
+It took only 18 seconds on my machine (Windows VM on a 2015 MacBook Pro) which is quite impressive.
+
+If you keep it running, curve service will trigger updates every minute and our universe will be recalculated. 
+
+## Conclusion
+
+As you can see, with the help of just a few tricks we were able to calculate a z-spread for over 600 instruments in less than 20 seconds - all inside Excel. And I hope as well that I have demonstrated that using custom event handlers in VBA is a powerful tool that helps you save time and computational resources.
+
+## Additional resources
+
+1. [Working with Excel Templates](http://amers1.help.cp.extranet.thomsonreuters.biz/training/player/8911) (requires a Thomson Reuters Eikon login);
+
+2. [COM API tutorials](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/learning?content=710&type=learning_material_item);
+
+3. [COM API Developer's guide](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/docs?content=4734&type=documentation_item);
+
+4. [Running search](https://emea1.apps.cp.extranet.thomsonreuters.biz/Apps/HelpEikonOffice/0.4.3/Default.htm#efo_running_search.htm#Rae44270) (requires a Thomson Reuters Eikon login);
+
+5. [AdBondSpread](https://emea1.apps.cp.thomsonreuters.com/Apps/AdfinLibrary/1.4.5/Default.htm#cshid=AdBondSpread) (requires a Thomson Reuters Eikon login).

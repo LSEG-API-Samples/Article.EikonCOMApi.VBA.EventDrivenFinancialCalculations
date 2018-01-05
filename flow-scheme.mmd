@@ -1,0 +1,25 @@
+
+graph TD
+
+rds-->|"(currencies)"|cs
+cs-->|"(update)"|calc
+
+subgraph curves
+    cs["Curve service"]
+    c0["Curve 1"]
+    cn["Curve n"]
+
+    cs-->|ric for 1|c0
+    cs-->|ric for n|cn
+end
+
+input(("Start"))
+ss["Search service"]
+rds["Reference data service"]
+ps["Price service"]
+calc["Z-spread calculation"]
+
+input-->|"(search criteria)"|ss
+ss-->|"(clearing codes)"|rds
+rds-->|"(rics)"|ps
+ps-->|"(price update)"|calc
