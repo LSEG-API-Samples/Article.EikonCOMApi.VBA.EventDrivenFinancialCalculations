@@ -8,7 +8,7 @@ For this article you should be somewhat familiar with Thomson Reuters Eikon for 
 
 ## Financial calculations on a spreadsheet
 
-Imagine you are tasked with calculating a z-spread for a fixed income instrument in Excel. That should not be too complex, as you can just get all necessary data on your spreadsheet and use a couple of Adfin functions. As an example, you can use the **Bond pricing** template from the **Template library**<sup>1</sup> in Eikon for Excel.
+Imagine you are tasked with calculating a z-spread for a fixed income instrument in Excel. That should not be too complex, as you can just get all necessary data on your spreadsheet and use a couple of Adfin functions. As an example, you can use the **Bond pricing** template from the **Template library** in Eikon for Excel.
 
 Here are the inputs of your calculation by data type: 
 
