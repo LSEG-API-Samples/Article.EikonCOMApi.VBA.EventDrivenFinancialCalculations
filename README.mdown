@@ -1,10 +1,10 @@
-# Event-driven financial calculations with Thomson Reuters Eikon for Excel and Visual Basic for Applications
+# Event-driven financial calculations with Refinitiv Eikon for Excel and Visual Basic for Applications
 
 ## Introduction
 
 While Microsoft is considering adding Python as native scripting language into Excel, we still have some time to practice Visual Basic for Applications and its lesser known object oriented approach features. 
 
-For this article you should be somewhat familiar with Thomson Reuters Eikon for Excel, Adfin and VBA, as well as with some basic fixed income calculations.
+For this article you should be somewhat familiar with Refinitiv Eikon for Excel, Adfin and VBA, as well as with some basic fixed income calculations.
 
 ## Financial calculations on a spreadsheet
 
@@ -33,7 +33,7 @@ Let us have a look at how can we migrate this structure to pure VBA.
 
 The article does not present the full code listing but only highlights the key pieces that will help you get around the attached Excel workbook. I am using the **...** sign in the code samples in place of omitted pieces of code.  
 
-You must only run the code with Thomson Reuters Eikon plugin loaded and connected to the platform (signed in).
+You must only run the code with Refinitiv Eikon plugin loaded and connected to the platform (signed in).
 
 The workbook has the following structure:
 
@@ -58,7 +58,7 @@ After opening the file please make sure that all references are loaded correctly
 
 ## Tools and API
 
-For this task we are going to use several Thomson Reuters Eikon COM APIs, located in your Thomson Reuters folder %PROGRAMFILES(X86)%\Thomson Reuters\Eikon\(**X, Y or Z folder**)\Bin.
+For this task we are going to use several Refinitiv Eikon COM APIs, located in your Refinitiv folder %PROGRAMFILES(X86)%\Refinitiv\Eikon\(**X, Y or Z folder**)\Bin.
 
 | Name              | Type       | File        |    
 | ----------------- | ---------- | ----------- | 
@@ -78,7 +78,7 @@ I am not going to dive into the details of the usage of specific APIs as this is
 
 However, since we will be working with data, I will need to add an introduction to two entities that we are going to use: real-time records and chains.
 
-A real-time record is a set of standard fields that contains the data related to a financial instrument. The key identifier of a record that is used by Thomson Reuters is a **RIC**, or the Reuters Instrument Code. 
+A real-time record is a set of standard fields that contains the data related to a financial instrument. The key identifier of a record that is used by Refinitiv is a **RIC**, or the Reuters Instrument Code. 
 
 For instance, the bid quote for GBP/USD can be found in field BID of the GBP= RIC, or the offer yield for a 10-year US Treasury is in the SEC_YLD_1 field of the US10YT=RR RIC.
 
@@ -114,7 +114,7 @@ So, here is how it is going to roughly look like:
 
 We need to generate a list of codes based on some criteria, so for this we are going to create a wrapper around `RSearchLib.RSearchMgr` and `RSearchLib.RSearchQuery` (**rsearch.dll**) workflow with a `Query()` method and `OnUpdate()` event, delivering the results. 
 
-For more information on `RSearch` please go check out [this tutorial](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/learning?content=3560&type=learning_material_item) on the Developer Community portal.
+For more information on `RSearch` please go check out [this tutorial](https://developers.refinitiv.com/en/api-catalog/eikon/com-apis-for-use-in-custom-applications/tutorials#tutorial-4-search) on the Developer Community portal.
 
 For our example, we are going to request all active Eurobonds with a fixed coupon rate issued by governments and maturing after today.
 
@@ -125,7 +125,7 @@ This roughly translates into the following search query.
 q = "RCSCountryGenealogy:'A:S' RCSCouponTypeGenealogy:'A:25' DbTypeDescription:'Govt/Treasury/Central Bank' IsActive:Yes MaturityDate:>" + Format$(DateTime.Date, "YYYY-MM-DD")
 ```
 
-**NOTE**: There is no definitive guide on RSearch parameters, so a good practice will be to build your query using the **Search** tool in Thomson Reuters Eikon for Excel. 
+**NOTE**: There is no definitive guide on RSearch parameters, so a good practice will be to build your query using the **Search** tool in Refinitiv Eikon for Excel. 
 
 We will need to sort the results by the issuer name, so the request parameters will look like this.
 
@@ -148,7 +148,7 @@ At the moment of writing, the query returned 831 instrument.
 
 The `ReferenceDataService` is a wrapper around `Dex2Lib.Dex2Mgr` and `Dex2Lib.Rdata` (**dex2.dll**) with a `Query()` method and `OnUpdate()` event. 
 
-For more information on `Dex2` please check out [this tutorial](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/learning?content=5760&type=learning_material_item) on the Developer Community portal.
+For more information on `Dex2` please check out [this tutorial](https://developers.refinitiv.com/en/api-catalog/eikon/com-apis-for-use-in-microsoft-office/tutorials#tutorial-6-data-engine-dex-2) on the Developer Community portal.
 
 The `Query()` method takes a list of codes and fields. For our example we are going to request the following fields:
 
@@ -244,7 +244,7 @@ So, in order to build a term structure in the required format: a 2-dimensional a
 
 The `Curve` class is essentially a wrapper around the functionality of `AdfinXRtLib.AdxRtChain` for **#1** and `AdfinXRtLib.AdxRtList` for **#2** from the real-time data API (**rtx.dll**).
 
-For more information on `AdfinXrt` please go check out [this tutorial](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/learning?content=3151&type=learning_material_item) on the Developer Community portal.
+For more information on `AdfinXrt` please go check out [this tutorial](https://developers.refinitiv.com/en/api-catalog/eikon/com-apis-for-use-in-microsoft-office/tutorials#tutorial-8-adfin-x-functions) on the Developer Community portal.
 
 Let us start with requesting the chain.
 
@@ -542,12 +542,12 @@ As you can see, with the help of just a few tricks we were able to calculate a z
 
 ## Additional resources
 
-1. [Working with Excel Templates](http://amers1.help.cp.extranet.thomsonreuters.biz/training/player/8911) (requires a Thomson Reuters Eikon login);
+1. [Working with Excel Templates]() (requires a Refinitiv Eikon login);
 
-2. [COM API tutorials](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/learning?content=710&type=learning_material_item);
+2. [COM API tutorials](https://developers.refinitiv.com/en/api-catalog/eikon/com-apis-for-use-in-custom-applications/tutorials);
 
-3. [COM API Developer's guide](https://developers.thomsonreuters.com/eikon-apis/com-apis-use-microsoft-office/docs?content=4734&type=documentation_item);
+3. [COM API Developer's guide](https://developers.refinitiv.com/en/api-catalog/eikon/com-apis-for-use-in-custom-applications/documentation);
 
-4. [Running search](https://emea1.apps.cp.extranet.thomsonreuters.biz/Apps/HelpEikonOffice/0.4.3/Default.htm#efo_running_search.htm#Rae44270) (requires a Thomson Reuters Eikon login);
+4. [Running search]() (requires a Refinitiv Eikon login);
 
-5. [AdBondSpread](https://emea1.apps.cp.thomsonreuters.com/Apps/AdfinLibrary/1.4.5/Default.htm#cshid=AdBondSpread) (requires a Thomson Reuters Eikon login).
+5. [AdBondSpread]() (requires a Refinitiv Eikon login).
