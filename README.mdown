@@ -78,7 +78,7 @@ I am not going to dive into the details of the usage of specific APIs as this is
 
 However, since we will be working with data, I will need to add an introduction to two entities that we are going to use: real-time records and chains.
 
-A real-time record is a set of standard fields that contains the data related to a financial instrument. The key identifier of a record that is used by Refinitiv is a **RIC**, or the Reuters Instrument Code. 
+A real-time record is a set of standard fields that contains the data related to a financial instrument. The key identifier of a record that is used by Refinitiv is a **RIC**, or the Refinitiv Instrument Code. 
 
 For instance, the bid quote for GBP/USD can be found in field BID of the GBP= RIC, or the offer yield for a 10-year US Treasury is in the SEC_YLD_1 field of the US10YT=RR RIC.
 
