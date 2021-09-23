@@ -542,12 +542,12 @@ As you can see, with the help of just a few tricks we were able to calculate a z
 
 ## Additional resources
 
-1. [Working with Excel Templates]() (requires a Refinitiv Eikon login);
+1. [Working with Excel Templates](https://amers1-help.platform.refinitiv.com/training/player/8911) (requires a Refinitiv Eikon login);
 
 2. [COM API tutorials](https://developers.refinitiv.com/en/api-catalog/eikon/com-apis-for-use-in-custom-applications/tutorials);
 
 3. [COM API Developer's guide](https://developers.refinitiv.com/en/api-catalog/eikon/com-apis-for-use-in-custom-applications/documentation);
 
-4. [Running search]() (requires a Refinitiv Eikon login);
+4. [Running search](https://amers1-apps.platform.refinitiv.com/Apps/HelpEikonOffice/0.4.3/Default.htm#efo_running_search.htm#Rae44270) (requires a Refinitiv Eikon login);
 
-5. [AdBondSpread]() (requires a Refinitiv Eikon login).
+5. [AdBondSpread](https://amers1-apps.platform.refinitiv.com/Apps/AdfinLibrary/?cshid=AdBondSpread) (requires a Refinitiv Eikon login).
